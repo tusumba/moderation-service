@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    uses: tusumba/tusumba-common/.github/workflows/python.yml@main
+
+  required:
+    name: CI required
+    needs: python
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require successful Python checks
+        env:
+          RESULT: ${{ needs.python.result }}
+        run: test "$RESULT" = success
