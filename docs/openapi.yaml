@@ -1,0 +1,1278 @@
+openapi: 3.0.3
+info:
+  title: Tusumba Moderation API
+  version: 1.0.0
+  description: |
+    API сервиса Moderation по разделам «Заявки и модерация» и «Жалобы» архитектуры Tusumba:
+    заявки на мероприятие и на страницу секции, жалобы на мероприятие и секцию,
+    решения модераторов и журнал действий модерации.
+
+    Внешний API доступен только через API Gateway под префиксом `/v1`.
+    Пути `/v1/moderation/*` доступны только пользователю с глобальной ролью `moderator`
+    из JWT, остальным - 403. Своих путей `/internal` у Moderation нет.
+
+    **Заявка.** Пользователь подаёт заявку на мероприятие или на страницу секции.
+    Администратор секции может подать заявку на мероприятие от имени секции (`club_id`).
+    Модератор одобряет или отклоняет заявку, при отклонении комментарий обязателен.
+    При одобрении Moderation назначает `result_object_id` и публикует событие `ApplicationApproved`:
+    events-service создаёт мероприятие или секцию с этим id и назначает автора заявки
+    владельцем команды мероприятия (`event_team_members`, роль `owner`) или администратором
+    секции (`club_admins`). Повтор события не создаёт второй объект.
+    При отклонении публикуется событие `ApplicationRejected`.
+
+    **Жалоба.** При подаче Moderation запрашивает у events-service текущую версию текста
+    объекта и сохраняет её в `target_version_id`, поэтому модератор видит текст ровно
+    на момент подачи. Окончательное решение по жалобе публикует событие `ComplaintResolved`.
+
+    **Журнал.** Каждое решение модератора по заявке или жалобе записывается в журнал.
+    Записи журнала не изменяются и не удаляются.
+
+    Вызовы events-service (пути `/internal`, сервисный токен):
+    - `GET /internal/clubs/{id}/permissions` - право подать заявку от имени секции;
+    - `GET /internal/events/{id}`, `GET /internal/clubs/{id}` - текущая версия текста при подаче жалобы;
+    - `GET /internal/events/{id}/versions/{versionId}`, `GET /internal/clubs/{id}/versions/{versionId}` -
+      текст на момент жалобы в карточке модератора.
+
+    Схемы событий брокера лежат в tusumba-contracts (#18889).
+
+    Общие правила:
+    - списки: параметры `page` (с 1) и `size` (по умолчанию 20, максимум 100), ответ `items`, `total`, `page`, `size`;
+    - ошибки: объект `error` с машинным кодом `code` и сообщением `message` для пользователя (#18886),
+      для `validation_error` дополнительно `details` по полям;
+    - при ответе 5xx клиент показывает сообщение «... Попробуйте позже.» из требования;
+    - пустой список - штатный ответ 200 с пустым `items`;
+    - идентификаторы - UUID, время - ISO 8601 в UTC, дата мероприятия - `YYYY-MM-DD`.
+
+    Не входит в эту версию (открытые решения, раздел 9 вики): анонимная подача жалобы
+    и вложения-доказательства (#18120).
+  x-task: https://ai.nsu.ru/issues/18890
+externalDocs:
+  description: Архитектура Tusumba
+  url: https://ai.nsu.ru/projects/tusumba/wiki/Архитектура
+security:
+  - BearerAuth: []
+tags:
+  - name: applications
+    description: Заявки на мероприятие и страницу секции (#18090, #18098, #18102)
+  - name: moderation-applications
+    description: Проверка заявок модератором (#18106)
+  - name: complaints
+    description: Жалобы на мероприятие и секцию (#18120, #18121)
+  - name: moderation-complaints
+    description: Рассмотрение жалоб модератором (#18107)
+  - name: moderation-log
+    description: Журнал действий модерации (#18108)
+paths:
+  /v1/applications:
+    post:
+      tags: [applications]
+      operationId: createApplication
+      summary: Подать заявку на мероприятие или на страницу секции
+      description: |
+        Создаёт заявку со статусом `on_review`, после чего она попадает в очередь модератора.
+        - `type = event` - заявка на мероприятие (#18090, #18098), заполняется блок `event`.
+          Если указан `club_id`, заявка подаётся от имени секции (#18102): пользователь должен быть
+          администратором этой секции, право проверяется у events-service.
+        - `type = club_page` - заявка на страницу секции (#18090), заполняется блок `club_page`.
+
+        Дубликатом считается заявка того же автора и того же типа в статусе `on_review`
+        с тем же названием (для мероприятия - и с той же датой). Дубликат не создаётся.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApplicationCreate'
+            examples:
+              event:
+                summary: Заявка на мероприятие
+                value:
+                  type: event
+                  event:
+                    title: Посвящение в студенты ФИТ
+                    description: Концерт, конкурсы и дискотека для первокурсников.
+                    date: '2026-12-05'
+                    place_address: Новосибирск, ул. Пирогова, 1, Большая актовая аудитория
+                    is_free: true
+              event_from_club:
+                summary: Заявка на мероприятие от имени секции
+                value:
+                  type: event
+                  club_id: 0b8a4f0e-3c55-4d7a-9a51-5d3c0f6c2a10
+                  event:
+                    title: Отчётный концерт музклуба
+                    description: Выступления групп музклуба НГУ.
+                    date: '2026-12-20'
+                    place_address: Новосибирск, ул. Пирогова, 1, Большая актовая аудитория
+                    is_free: false
+                    price:
+                      amount: 30000
+                      currency: RUB
+              club_page:
+                summary: Заявка на страницу секции
+                value:
+                  type: club_page
+                  club_page:
+                    name: Клуб настольных игр
+                    description: Играем в настольные игры каждую пятницу.
+                    meeting_place: Новосибирск, ул. Пирогова, 1, ауд. 3107
+                    schedule: Пятница, 18:00-21:00
+                    contacts:
+                      telegram: '@nsu_boardgames'
+      responses:
+        '201':
+          description: Заявка создана и отправлена на проверку
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Application'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: '`club_forbidden` - пользователь не администратор секции из `club_id`.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: club_forbidden
+                  message: У вас нет прав на выбранную секцию.
+        '404':
+          description: '`club_not_found` - секции из `club_id` нет или она заблокирована.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: club_not_found
+                  message: Секция недоступна.
+        '409':
+          description: '`application_duplicate` - у автора уже есть такая заявка на проверке.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: application_duplicate
+                  message: У вас уже есть активная заявка на этот объект.
+        '422':
+          description: |
+            `validation_error` - не заполнены обязательные поля, блок данных не соответствует `type`,
+            дата мероприятия в прошлом, у платного мероприятия нет цены.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: validation_error
+                  message: Заполните обязательные поля.
+                  details:
+                    - field: event.date
+                      message: Дата мероприятия не может быть в прошлом.
+        '503':
+          description: '`service_unavailable` - events-service не ответил при проверке прав на секцию.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: service_unavailable
+                  message: Не удалось отправить заявку. Попробуйте позже.
+  /v1/me/applications:
+    get:
+      tags: [applications]
+      operationId: listMyApplications
+      summary: Мои заявки
+      description: Заявки текущего пользователя, новые первыми.
+      parameters:
+        - name: status
+          in: query
+          required: false
+          description: Только заявки в этом статусе
+          schema:
+            $ref: '#/components/schemas/ApplicationStatus'
+        - name: type
+          in: query
+          required: false
+          description: Только заявки этого типа
+          schema:
+            $ref: '#/components/schemas/ApplicationType'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+      responses:
+        '200':
+          description: Список заявок
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApplicationPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /v1/me/applications/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ApplicationId'
+    get:
+      tags: [applications]
+      operationId: getMyApplication
+      summary: Моя заявка
+      description: |
+        Заявка текущего пользователя со статусом и комментарием модератора.
+        Чужая заявка возвращает 404, чтобы не раскрывать её существование.
+      responses:
+        '200':
+          description: Заявка
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Application'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/ApplicationNotFound'
+  /v1/moderation/applications:
+    get:
+      tags: [moderation-applications]
+      operationId: listApplicationsForModeration
+      summary: Очередь заявок
+      description: |
+        Заявки на мероприятия и страницы секций для модератора.
+        По умолчанию показываются заявки на проверке (`on_review`), старые первыми.
+      parameters:
+        - name: status
+          in: query
+          required: false
+          description: Статус заявок
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/ApplicationStatus'
+            default: on_review
+        - name: type
+          in: query
+          required: false
+          description: Только заявки этого типа
+          schema:
+            $ref: '#/components/schemas/ApplicationType'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+      responses:
+        '200':
+          description: Список заявок
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApplicationPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ModeratorOnly'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /v1/moderation/applications/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ApplicationId'
+    get:
+      tags: [moderation-applications]
+      operationId: getApplicationForModeration
+      summary: Карточка заявки
+      description: Данные заявки и автор заявки (#18106, шаг 4.4).
+      responses:
+        '200':
+          description: Заявка
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Application'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ModeratorOnly'
+        '404':
+          $ref: '#/components/responses/ApplicationNotFound'
+  /v1/moderation/applications/{id}/decision:
+    parameters:
+      - $ref: '#/components/parameters/ApplicationId'
+    post:
+      tags: [moderation-applications]
+      operationId: decideApplication
+      summary: Одобрить или отклонить заявку
+      description: |
+        Решение можно принять только по заявке в статусе `on_review`.
+        - `approve`: статус `approved`, назначается `result_object_id`, публикуется `ApplicationApproved`,
+          events-service создаёт мероприятие или секцию и назначает автора владельцем.
+        - `reject`: статус `rejected`, комментарий обязателен, публикуется `ApplicationRejected`.
+          Автор видит комментарий в своей заявке.
+
+        Решение, `processed_by` и `processed_at` сохраняются в заявке, в журнал добавляется запись
+        с `action_type = application`. Если заявку уже обработал другой модератор, возвращается 409,
+        клиент заново запрашивает карточку и показывает актуальный статус (#18106, п. 5.2).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApplicationDecisionRequest'
+            examples:
+              approve:
+                summary: Одобрить
+                value:
+                  decision: approve
+              reject:
+                summary: Отклонить с комментарием
+                value:
+                  decision: reject
+                  comment: Укажите точное место проведения и контакты организатора.
+      responses:
+        '200':
+          description: Решение сохранено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Application'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ModeratorOnly'
+        '404':
+          $ref: '#/components/responses/ApplicationNotFound'
+        '409':
+          description: '`application_already_processed` - заявка уже не в статусе `on_review`.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: application_already_processed
+                  message: Заявка уже обработана.
+        '422':
+          description: '`validation_error` - неизвестное решение или отказ без комментария.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: validation_error
+                  message: Укажите комментарий к отказу.
+                  details:
+                    - field: comment
+                      message: Комментарий обязателен при отклонении заявки.
+  /v1/complaints:
+    post:
+      tags: [complaints]
+      operationId: createComplaint
+      summary: Подать жалобу на мероприятие или секцию
+      description: |
+        Создаёт жалобу со статусом `new` и передаёт её модератору (#18120).
+        Причина обязательна, комментарий необязателен. Moderation запрашивает у events-service
+        объект жалобы и его текущую версию текста и сохраняет её в `target_version_id`.
+        Жалоба на несуществующий или заблокированный объект не принимается.
+
+        Повторная жалоба того же пользователя на тот же объект, пока предыдущая
+        не рассмотрена (`new` или `extra_check`), не создаётся. Жалобы разных пользователей
+        на один объект модератор видит вместе через фильтр `target_id` в очереди.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ComplaintCreate'
+            example:
+              target_type: event
+              target_id: 6f1d2c3b-8a9e-4b7c-9d0e-1f2a3b4c5d6e
+              reason: misleading_info
+              comment: В описании указана бесплатная запись, а на входе просят деньги.
+      responses:
+        '201':
+          description: Жалоба сохранена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Complaint'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: '`complaint_target_unavailable` - объекта нет или он заблокирован.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: complaint_target_unavailable
+                  message: Объект жалобы недоступен.
+        '409':
+          description: '`complaint_duplicate` - жалоба пользователя на этот объект ещё рассматривается.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: complaint_duplicate
+                  message: Жалоба уже отправлена.
+        '422':
+          description: '`validation_error` - не выбрана причина, неверный тип объекта, слишком длинный комментарий.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: validation_error
+                  message: Выберите причину жалобы.
+                  details:
+                    - field: reason
+                      message: Выберите причину жалобы.
+        '503':
+          description: '`service_unavailable` - events-service не ответил при проверке объекта жалобы.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: service_unavailable
+                  message: Не удалось отправить жалобу. Попробуйте позже.
+  /v1/me/complaints:
+    get:
+      tags: [complaints]
+      operationId: listMyComplaints
+      summary: Мои жалобы
+      description: |
+        Жалобы текущего пользователя, новые первыми: объект, причина, дата отправки,
+        текущий статус и результат после решения (#18121).
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+      responses:
+        '200':
+          description: Список жалоб
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ComplaintPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /v1/me/complaints/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ComplaintId'
+    get:
+      tags: [complaints]
+      operationId: getMyComplaint
+      summary: Моя жалоба
+      description: |
+        Жалоба текущего пользователя (проверка по `author_user_id`).
+        Чужая жалоба возвращает 404 и не раскрывается.
+      responses:
+        '200':
+          description: Жалоба
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Complaint'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/ComplaintNotFound'
+  /v1/moderation/complaints:
+    get:
+      tags: [moderation-complaints]
+      operationId: listComplaintsForModeration
+      summary: Очередь жалоб
+      description: |
+        Список жалоб с причиной, объектом и датой отправки (#18107, шаг 4.1).
+        По умолчанию показываются нерассмотренные жалобы (`new` и `extra_check`), старые первыми.
+      parameters:
+        - name: status
+          in: query
+          required: false
+          description: Статусы жалоб, можно указать несколько
+          style: form
+          explode: true
+          schema:
+            type: array
+            items:
+              $ref: '#/components/schemas/ComplaintStatus'
+            default: ['new', 'extra_check']
+        - name: target_type
+          in: query
+          required: false
+          description: Тип объекта жалобы
+          schema:
+            $ref: '#/components/schemas/ComplaintTargetType'
+        - name: target_id
+          in: query
+          required: false
+          description: Все жалобы на один объект
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+      responses:
+        '200':
+          description: Список жалоб
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModeratorComplaintPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ModeratorOnly'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /v1/moderation/complaints/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ComplaintId'
+    get:
+      tags: [moderation-complaints]
+      operationId: getComplaintForModeration
+      summary: Карточка жалобы
+      description: |
+        Объект жалобы, причина, комментарий пользователя и текст объекта на момент подачи
+        (`target_snapshot`, версия `target_version_id` из events-service).
+        Если events-service не ответил, жалоба возвращается без `target_snapshot`.
+      responses:
+        '200':
+          description: Жалоба
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModeratorComplaint'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ModeratorOnly'
+        '404':
+          $ref: '#/components/responses/ComplaintNotFound'
+  /v1/moderation/complaints/{id}/decision:
+    parameters:
+      - $ref: '#/components/parameters/ComplaintId'
+    post:
+      tags: [moderation-complaints]
+      operationId: decideComplaint
+      summary: Подтвердить, отклонить или отправить жалобу на дополнительную проверку
+      description: |
+        Решение можно принять по жалобе в статусе `new` или `extra_check`.
+        - `confirm` - жалоба подтвердилась, статус `true`;
+        - `reject` - жалоба не подтвердилась, статус `false`;
+        - `extra_check` - данных недостаточно, статус `extra_check` (только из `new`).
+
+        Решение, комментарий, `processed_by` и `processed_at` сохраняются в жалобе, в журнал
+        добавляется запись с `action_type = complaint`. Решения `confirm` и `reject` публикуют
+        событие `ComplaintResolved`, автор видит результат в своей жалобе.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ComplaintDecisionRequest'
+            example:
+              decision: confirm
+              comment: Описание мероприятия вводит в заблуждение.
+      responses:
+        '200':
+          description: Решение сохранено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModeratorComplaint'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ModeratorOnly'
+        '404':
+          $ref: '#/components/responses/ComplaintNotFound'
+        '409':
+          description: |
+            `complaint_already_processed` - жалоба уже в статусе `true` или `false`,
+            либо повторная отправка на дополнительную проверку.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: complaint_already_processed
+                  message: Жалоба уже обработана.
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /v1/moderation/log:
+    get:
+      tags: [moderation-log]
+      operationId: listModerationLog
+      summary: Журнал действий модерации
+      description: |
+        Действия модераторов, новые первыми: тип действия, объект, дата и время, модератор,
+        решение (#18108). Фильтры применяются одновременно.
+      parameters:
+        - name: action_type
+          in: query
+          required: false
+          description: Тип действия
+          schema:
+            $ref: '#/components/schemas/ModerationActionType'
+        - name: decision
+          in: query
+          required: false
+          description: Решение
+          schema:
+            $ref: '#/components/schemas/ModerationDecision'
+        - name: moderator_id
+          in: query
+          required: false
+          description: Действия одного модератора
+          schema:
+            type: string
+            format: uuid
+        - name: object_id
+          in: query
+          required: false
+          description: Действия по одной заявке или жалобе
+          schema:
+            type: string
+            format: uuid
+        - name: from
+          in: query
+          required: false
+          description: Действия не раньше этого времени
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: false
+          description: Действия раньше этого времени
+          schema:
+            type: string
+            format: date-time
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+      responses:
+        '200':
+          description: Записи журнала
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModerationLogPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ModeratorOnly'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /v1/moderation/log/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Идентификатор записи журнала (moderation_log.id)
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [moderation-log]
+      operationId: getModerationLogEntry
+      summary: Подробности действия
+      description: Запись журнала вместе с заявкой или жалобой, по которой принято решение.
+      responses:
+        '200':
+          description: Запись журнала
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModerationLogEntryDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ModeratorOnly'
+        '404':
+          description: '`log_entry_not_found` - записи журнала нет.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: log_entry_not_found
+                  message: Не удалось открыть детали действия.
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT RS256 проверяется каждым сервисом по публичному ключу Identity.
+  parameters:
+    ApplicationId:
+      name: id
+      in: path
+      required: true
+      description: Идентификатор заявки (applications.id)
+      schema:
+        type: string
+        format: uuid
+    ComplaintId:
+      name: id
+      in: path
+      required: true
+      description: Идентификатор жалобы (complaints.id)
+      schema:
+        type: string
+        format: uuid
+    Page:
+      name: page
+      in: query
+      required: false
+      description: Номер страницы, с 1
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    Size:
+      name: size
+      in: query
+      required: false
+      description: Размер страницы
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+  responses:
+    Unauthorized:
+      description: '`unauthorized` - нет токена или токен недействителен.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: unauthorized
+              message: Войдите, чтобы выполнить это действие.
+    ModeratorOnly:
+      description: '`forbidden` - у пользователя нет глобальной роли `moderator`.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: forbidden
+              message: Недостаточно прав.
+    ValidationError:
+      description: '`validation_error` - тело или параметры запроса не прошли проверку.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: validation_error
+              message: Проверьте введённые данные.
+              details:
+                - field: size
+                  message: Значение должно быть от 1 до 100.
+    ApplicationNotFound:
+      description: '`application_not_found` - заявки нет или она принадлежит другому пользователю.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: application_not_found
+              message: Заявка не найдена.
+    ComplaintNotFound:
+      description: '`complaint_not_found` - жалобы нет или она принадлежит другому пользователю.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: complaint_not_found
+              message: Жалоба не найдена.
+  schemas:
+    Error:
+      type: object
+      description: Ошибка в едином формате всех сервисов (tusumba-common, #18886)
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: Машинный код ошибки для клиента
+            message:
+              type: string
+              description: Сообщение для пользователя
+            details:
+              type: array
+              description: Ошибки по отдельным полям (для validation_error)
+              items:
+                type: object
+                required: [field, message]
+                properties:
+                  field:
+                    type: string
+                  message:
+                    type: string
+    Money:
+      type: object
+      description: Сумма в минимальных единицах валюты (копейках), как в Ticketing & Payments
+      required: [amount, currency]
+      properties:
+        amount:
+          type: integer
+          minimum: 0
+          example: 30000
+        currency:
+          type: string
+          enum: [RUB]
+    ApplicationType:
+      type: string
+      description: |
+        Тип заявки:
+        event - заявка на мероприятие;
+        club_page - заявка на страницу секции.
+      enum: [event, club_page]
+    ApplicationStatus:
+      type: string
+      description: |
+        Статус заявки:
+        on_review - на проверке;
+        approved - одобрена, объект создан;
+        rejected - отклонена, автор видит комментарий модератора.
+      enum: [on_review, approved, rejected]
+    EventApplicationData:
+      type: object
+      description: Данные мероприятия в заявке (термин «Заявка на Организатора», #18098)
+      required: [title, description, date, place_address, is_free]
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: Название мероприятия
+        description:
+          type: string
+          minLength: 1
+          maxLength: 1000
+          description: Описание, включая ссылки и контакты
+        date:
+          type: string
+          format: date
+          description: Дата проведения, не раньше сегодняшней
+        place_address:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: Место проведения - адрес, название заведения или место сбора
+        is_free:
+          type: boolean
+          description: Бесплатное мероприятие
+        price:
+          $ref: '#/components/schemas/Money'
+    ClubContacts:
+      type: object
+      description: Контакты секции, ключ - канал связи, значение - адрес
+      additionalProperties:
+        type: string
+      example:
+        telegram: '@nsu_boardgames'
+        email: boardgames@example.org
+    ClubPageApplicationData:
+      type: object
+      description: Данные страницы секции в заявке (термин «Заявка на создание секции»)
+      required: [name, description]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: Название секции
+        description:
+          type: string
+          minLength: 1
+          maxLength: 1000
+          description: Описание секции
+        meeting_place:
+          type: string
+          maxLength: 500
+          description: Место встреч
+        schedule:
+          type: string
+          maxLength: 1000
+          description: Расписание встреч
+        contacts:
+          $ref: '#/components/schemas/ClubContacts'
+    ApplicationCreate:
+      type: object
+      description: |
+        Новая заявка. При `type = event` обязателен блок `event`, при `type = club_page` - блок `club_page`.
+        Для платного мероприятия (`event.is_free = false`) обязательна `event.price`.
+      required: [type]
+      properties:
+        type:
+          $ref: '#/components/schemas/ApplicationType'
+        club_id:
+          type: string
+          format: uuid
+          description: Секция-организатор, если заявка на мероприятие подаётся от имени секции (#18102)
+        event:
+          $ref: '#/components/schemas/EventApplicationData'
+        club_page:
+          $ref: '#/components/schemas/ClubPageApplicationData'
+    Application:
+      type: object
+      description: Заявка
+      required: [id, type, author_user_id, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          $ref: '#/components/schemas/ApplicationType'
+        author_user_id:
+          type: string
+          format: uuid
+          description: Автор заявки (identity_db.users.id)
+        club_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Секция-организатор для заявки на мероприятие от имени секции
+        event:
+          $ref: '#/components/schemas/EventApplicationData'
+        club_page:
+          $ref: '#/components/schemas/ClubPageApplicationData'
+        status:
+          $ref: '#/components/schemas/ApplicationStatus'
+        moderator_comment:
+          type: string
+          nullable: true
+          description: Комментарий модератора; при отклонении заполнен всегда
+        result_object_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Созданное мероприятие (events.id) или секция (clubs.id); заполняется при одобрении
+        processed_by:
+          type: string
+          format: uuid
+          nullable: true
+          description: Модератор, принявший решение
+        created_at:
+          type: string
+          format: date-time
+        processed_at:
+          type: string
+          format: date-time
+          nullable: true
+    ApplicationPage:
+      type: object
+      required: [items, total, page, size]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Application'
+        total:
+          type: integer
+        page:
+          type: integer
+        size:
+          type: integer
+    ApplicationDecisionRequest:
+      type: object
+      required: [decision]
+      properties:
+        decision:
+          type: string
+          description: |
+            approve - одобрить;
+            reject - отклонить (нужен comment).
+          enum: [approve, reject]
+        comment:
+          type: string
+          maxLength: 1000
+          description: Комментарий модератора, обязателен при отклонении
+    ComplaintTargetType:
+      type: string
+      description: |
+        Объект жалобы:
+        event - мероприятие (events_db.events);
+        club - секция (events_db.clubs).
+      enum: [event, club]
+    ComplaintReason:
+      type: string
+      description: |
+        Причина жалобы (список согласуется с аналитиком по #18120):
+        fraud - мошенничество;
+        misleading_info - недостоверная информация;
+        offensive - оскорбительное содержание;
+        prohibited_content - нарушение правил платформы;
+        spam - спам или реклама;
+        other - другое, подробности в комментарии.
+      enum: [fraud, misleading_info, offensive, prohibited_content, spam, other]
+    ComplaintStatus:
+      type: string
+      description: |
+        Статус жалобы:
+        new - новая, ждёт рассмотрения;
+        extra_check - на дополнительной проверке;
+        false - рассмотрена, не подтвердилась;
+        true - рассмотрена, подтвердилась.
+      enum: ['new', 'extra_check', 'false', 'true']
+    ComplaintCreate:
+      type: object
+      required: [target_type, target_id, reason]
+      properties:
+        target_type:
+          $ref: '#/components/schemas/ComplaintTargetType'
+        target_id:
+          type: string
+          format: uuid
+          description: Мероприятие (events.id) или секция (clubs.id)
+        reason:
+          $ref: '#/components/schemas/ComplaintReason'
+        comment:
+          type: string
+          maxLength: 1000
+          description: Комментарий пользователя
+    Complaint:
+      type: object
+      description: Жалоба глазами автора
+      required: [id, target_type, target_id, reason, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        target_type:
+          $ref: '#/components/schemas/ComplaintTargetType'
+        target_id:
+          type: string
+          format: uuid
+        target_version_id:
+          type: string
+          format: uuid
+          description: Версия текста объекта на момент подачи (event_versions.id или club_versions.id)
+        reason:
+          $ref: '#/components/schemas/ComplaintReason'
+        comment:
+          type: string
+          nullable: true
+        status:
+          $ref: '#/components/schemas/ComplaintStatus'
+        moderator_comment:
+          type: string
+          nullable: true
+          description: Результат рассмотрения, комментарий модератора
+        created_at:
+          type: string
+          format: date-time
+          description: Дата и время отправки
+        processed_at:
+          type: string
+          format: date-time
+          nullable: true
+    ComplaintPage:
+      type: object
+      required: [items, total, page, size]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Complaint'
+        total:
+          type: integer
+        page:
+          type: integer
+        size:
+          type: integer
+    TargetSnapshot:
+      type: object
+      description: |
+        Текст объекта жалобы на момент подачи. Для мероприятия - название и описание
+        (event_versions), для секции - ещё место и расписание встреч и контакты (club_versions).
+      required: [version_id, version_no, title]
+      properties:
+        version_id:
+          type: string
+          format: uuid
+        version_no:
+          type: integer
+        title:
+          type: string
+          description: Название мероприятия или секции
+        description:
+          type: string
+          nullable: true
+        meeting_place:
+          type: string
+          nullable: true
+          description: Только для секции
+        schedule:
+          type: string
+          nullable: true
+          description: Только для секции
+        contacts:
+          $ref: '#/components/schemas/ClubContacts'
+        edited_at:
+          type: string
+          format: date-time
+          description: Когда создана эта версия
+    ModeratorComplaint:
+      type: object
+      description: Жалоба глазами модератора
+      required: [id, target_type, target_id, target_version_id, author_user_id, reason, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        target_type:
+          $ref: '#/components/schemas/ComplaintTargetType'
+        target_id:
+          type: string
+          format: uuid
+        target_version_id:
+          type: string
+          format: uuid
+        author_user_id:
+          type: string
+          format: uuid
+          description: Автор жалобы (identity_db.users.id)
+        reason:
+          $ref: '#/components/schemas/ComplaintReason'
+        comment:
+          type: string
+          nullable: true
+        status:
+          $ref: '#/components/schemas/ComplaintStatus'
+        moderator_comment:
+          type: string
+          nullable: true
+        processed_by:
+          type: string
+          format: uuid
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        processed_at:
+          type: string
+          format: date-time
+          nullable: true
+        target_snapshot:
+          $ref: '#/components/schemas/TargetSnapshot'
+    ModeratorComplaintPage:
+      type: object
+      description: Список жалоб, `target_snapshot` в списке не заполняется
+      required: [items, total, page, size]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ModeratorComplaint'
+        total:
+          type: integer
+        page:
+          type: integer
+        size:
+          type: integer
+    ComplaintDecisionRequest:
+      type: object
+      required: [decision]
+      properties:
+        decision:
+          type: string
+          description: |
+            confirm - жалоба подтвердилась;
+            reject - жалоба не подтвердилась;
+            extra_check - отправить на дополнительную проверку.
+          enum: [confirm, reject, extra_check]
+        comment:
+          type: string
+          maxLength: 1000
+          description: Комментарий модератора, автор видит его как результат рассмотрения
+    ModerationActionType:
+      type: string
+      description: |
+        Тип действия:
+        application - обработка заявки;
+        complaint - обработка жалобы.
+      enum: [application, complaint]
+    ModerationDecision:
+      type: string
+      description: |
+        Решение модератора:
+        approved - заявка одобрена;
+        rejected - заявка отклонена или жалоба не подтвердилась;
+        confirmed - жалоба подтвердилась;
+        extra_check - жалоба отправлена на дополнительную проверку.
+      enum: [approved, rejected, confirmed, extra_check]
+    ModerationLogEntry:
+      type: object
+      description: Запись журнала действий модерации
+      required: [id, moderator_id, action_type, object_id, decision, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        moderator_id:
+          type: string
+          format: uuid
+          description: Модератор, выполнивший действие (identity_db.users.id)
+        action_type:
+          $ref: '#/components/schemas/ModerationActionType'
+        object_id:
+          type: string
+          format: uuid
+          description: Заявка или жалоба, по которой принято решение (по action_type)
+        decision:
+          $ref: '#/components/schemas/ModerationDecision'
+        comment:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+          description: Дата и время действия
+    ModerationLogEntryDetail:
+      description: Запись журнала и объект действия; заполнено одно из полей application или complaint
+      allOf:
+        - $ref: '#/components/schemas/ModerationLogEntry'
+        - type: object
+          properties:
+            application:
+              $ref: '#/components/schemas/Application'
+            complaint:
+              $ref: '#/components/schemas/ModeratorComplaint'
+    ModerationLogPage:
+      type: object
+      required: [items, total, page, size]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ModerationLogEntry'
+        total:
+          type: integer
+        page:
+          type: integer
+        size:
+          type: integer

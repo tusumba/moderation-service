@@ -18,7 +18,7 @@
 
 Внешний: `POST /v1/applications`, `GET /v1/me/applications`, `GET /v1/moderation/applications`, `POST /v1/moderation/applications/{id}/decision`, `POST /v1/complaints`, `GET /v1/me/complaints`, `GET /v1/moderation/complaints`, `POST /v1/moderation/complaints/{id}/decision`, `GET /v1/moderation/log`.
 
-События в брокер: `ApplicationApproved`, `ComplaintResolved`.
+События в брокер: `ApplicationApproved`, `ApplicationRejected`, `ComplaintResolved`.
 
 Зависит от: `events-service` (права и версии текстов).
 
@@ -33,6 +33,9 @@ Python 3.12, FastAPI, SQLAlchemy 2 (async), Alembic, PostgreSQL 16, RabbitMQ (Fa
 Описание появится после готовности шаблона сервиса (#18887) и стенда (#18905). Окружение целиком поднимается из репозитория `deploy`.
 
 ## Документация
+
+- [OpenAPI v1](docs/openapi.yaml) - API разделов «Заявки и модерация» и «Жалобы» архитектуры.
+- [Модель данных](docs/data-model.md) - таблицы заявок, жалоб и журнала модерации, события, коды ошибок.
 
 Wiki проекта: https://ai.nsu.ru/projects/tusumba/wiki/Архитектура. Контракт API: OpenAPI v1 (#18890). Задачи ведутся в Redmine: https://ai.nsu.ru/projects/tusumba. Issues и Wiki GitHub выключены.
 
