@@ -752,15 +752,20 @@ components:
         default: 20
   responses:
     Unauthorized:
-      description: '`unauthorized` - нет токена или токен недействителен.'
+      description: |
+        Ошибки проверки токена из tusumba-common:
+        `not_authenticated` - «Требуется авторизация» (нет заголовка Authorization);
+        `token_expired` - «Срок действия токена истёк» (клиент обновляет токен через `POST /v1/auth/refresh` и повторяет запрос);
+        `invalid_token` - «Недействительный токен» (подпись неверна, токен испорчен или не access).
+        Клиент выбирает действие по `code`, а не по тексту `message`.
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
           example:
             error:
-              code: unauthorized
-              message: Войдите, чтобы выполнить это действие.
+              code: token_expired
+              message: Срок действия токена истёк
     ModeratorOnly:
       description: '`forbidden` - у пользователя нет глобальной роли `moderator`.'
       content:
