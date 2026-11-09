@@ -146,7 +146,9 @@
 
 | HTTP | code | Когда | Сообщение из требования |
 |---|---|---|---|
-| 401 | unauthorized | Нет токена или токен недействителен | |
+| 401 | not_authenticated | Нет заголовка Authorization (tusumba-common) | |
+| 401 | token_expired | Срок действия access-токена истёк (tusumba-common) | |
+| 401 | invalid_token | Токен недействителен или не access (tusumba-common) | |
 | 403 | forbidden | Путь модератора без роли `moderator` | |
 | 403 | club_forbidden | Заявка от имени секции не её администратором | #18102: «У вас нет прав на выбранную секцию.» |
 | 404 | club_not_found | Секции из `club_id` нет или она заблокирована | |
