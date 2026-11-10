@@ -12,7 +12,7 @@
 - решения по жалобам: подтвердить, отклонить, запросить дополнительную проверку;
 - журнал действий модерации с фильтрами.
 
-База данных `moderation_db`: `applications`, `complaints`, `moderation_log`.
+База данных `moderation_db`: `applications`, `complaints`, `moderation_log` (в миграциях пока `applications`).
 
 ## API
 
