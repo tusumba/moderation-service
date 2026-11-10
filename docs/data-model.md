@@ -30,13 +30,15 @@
 - `club_id` - секция-организатор, если заявка на мероприятие подана от имени секции.
 - `result_object_id` - id мероприятия или секции, который Moderation назначает при одобрении
   и передаёт в `ApplicationApproved`; events-service создаёт объект с этим id.
-- `moderator_comment` обязателен при `status = rejected`.
+- `moderator_comment` обязателен при `status = rejected` (CHECK `ck_applications_rejected_has_comment`).
 
 Индексы: (`status`, `created_at`) - очередь модератора; (`author_user_id`, `created_at`) - «мои заявки».
 
 Дубликат (#18090, п. 5.3): заявка того же автора и того же типа в статусе `on_review` с тем же
-названием (`payload.title` или `payload.name`), для мероприятия - и с той же датой.
-Проверяется в транзакции перед вставкой.
+названием (`payload.title` или `payload.name`) без учёта регистра, для мероприятия - и с той же датой.
+Пробелы по краям текстовых полей сервис убирает при сохранении. Дубликат не даёт создать частичный
+уникальный индекс `uq_applications_on_review_duplicate` по (`author_user_id`, `type`, `lower(название)`,
+`payload.date`) при `status = on_review`, в том числе при одновременной отправке двух одинаковых заявок.
 
 ## complaints
 

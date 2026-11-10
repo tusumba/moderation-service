@@ -12,7 +12,7 @@
 - решения по жалобам: подтвердить, отклонить, запросить дополнительную проверку;
 - журнал действий модерации с фильтрами.
 
-База данных `moderation_db`: `applications`, `complaints`, `moderation_log`.
+База данных `moderation_db`: `applications`, `complaints`, `moderation_log` (в миграциях пока `applications`).
 
 ## API
 
@@ -26,11 +26,43 @@
 
 ## Стек
 
-Python 3.12, FastAPI, SQLAlchemy 2 (async), Alembic, PostgreSQL 16, RabbitMQ (FastStream).
+Python 3.12, FastAPI, SQLAlchemy 2 (async), Alembic, PostgreSQL 16, RabbitMQ (FastStream), tusumba-common (проверка JWT, сервисный токен, формат ошибок).
 
 ## Запуск
 
-Описание появится после готовности шаблона сервиса (#18887) и стенда (#18905). Окружение целиком поднимается из репозитория `deploy`.
+Нужны [uv](https://docs.astral.sh/uv/) и Docker. Сервис собран из [service-template](https://github.com/tusumba/service-template).
+
+```bash
+uv sync
+cp .env.example .env
+uv run python -m tusumba_common.testing dev-keys   # тестовая пара ключей, впишите public.pem в JWT_PUBLIC_KEY
+docker compose up -d postgres
+uv run --env-file .env alembic upgrade head
+uv run --env-file .env uvicorn app.main:create_app --factory --reload
+```
+
+Документация API: http://127.0.0.1:8000/docs. Окружение целиком поднимается из репозитория `deploy`.
+
+### Переменные окружения
+
+| Переменная | По умолчанию | Что это |
+|---|---|---|
+| `DATABASE_URL` | обязательна | `postgresql+asyncpg://user:password@host:5432/db` |
+| `JWT_PUBLIC_KEY` | обязательна | публичный ключ Identity в PEM, tusumba-common проверяет им access-токены |
+| `SERVICE_TOKEN` | обязательна для вызовов `/internal` других сервисов | общий сервисный токен для `X-Service-Token` |
+| `LOG_LEVEL` | `INFO` | уровень логов |
+| `LOG_JSON` | `true` | `false` - читаемые логи для отладки |
+
+### Проверки
+
+```bash
+uv run ruff format --check .
+uv run ruff check .
+uv run mypy .
+uv run pytest      # PostgreSQL поднимается через testcontainers (нужен Docker)
+```
+
+Без Docker тесты идут на уже запущенном PostgreSQL: `TEST_DATABASE_URL=postgresql+asyncpg://... uv run pytest`.
 
 ## Документация
 

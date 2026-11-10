@@ -19,3 +19,6 @@ build/
 .idea/
 .vscode/
 .DS_Store
+
+# Тестовые ключи из python -m tusumba_common.testing
+dev-keys/
