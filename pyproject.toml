@@ -11,7 +11,10 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0.30",
     "asyncpg>=0.29",
     "alembic>=1.13",
+    "faststream[rabbit]>=0.6,<0.7",
+    "apscheduler>=3.11,<4",
     "tusumba-common @ git+https://github.com/tusumba/tusumba-common.git@v0.3.0",
+    "tusumba-contracts @ git+https://github.com/tusumba/tusumba-contracts.git@v0.1.0",
 ]
 
 [dependency-groups]
@@ -22,6 +25,7 @@ dev = [
     "pytest-asyncio>=0.24",
     "httpx2>=2.0",
     "testcontainers[postgres]>=4.8",
+    "testcontainers[rabbitmq]>=4.8",
 ]
 
 [tool.uv]
@@ -43,7 +47,10 @@ testpaths = ["tests"]
 pythonpath = ["."]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-filterwarnings = ["error"]
+filterwarnings = [
+    "error",
+    "ignore:The @wait_container_is_ready decorator is deprecated:DeprecationWarning",
+]
 
 [tool.mypy]
 python_version = "3.12"
@@ -54,3 +61,7 @@ plugins = ["pydantic.mypy"]
 [[tool.mypy.overrides]]
 module = ["tusumba_common", "tusumba_common.*"]
 follow_untyped_imports = true
+
+[[tool.mypy.overrides]]
+module = ["apscheduler.schedulers.asyncio"]
+ignore_missing_imports = true

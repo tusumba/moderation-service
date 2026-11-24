@@ -7,6 +7,7 @@ from app.models.application import (
     ApplicationType,
 )
 from app.models.base import SCHEMA, Base
+from app.models.events import OutboxMessage, ProcessedEvent
 
 __all__ = [
     "APPLICATION_STATUSES",
@@ -17,4 +18,6 @@ __all__ = [
     "ApplicationStatus",
     "ApplicationType",
     "Base",
+    "OutboxMessage",
+    "ProcessedEvent",
 ]

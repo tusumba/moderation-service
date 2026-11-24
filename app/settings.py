@@ -1,4 +1,4 @@
-from pydantic import SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     database_url: SecretStr
     database_pool_size: int = 5
     database_echo: bool = False
+    rabbitmq_url: SecretStr
+    outbox_poll_seconds: float = Field(default=1.0, gt=0)
 
     @field_validator("database_url")
     @classmethod

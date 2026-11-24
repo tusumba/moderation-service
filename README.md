@@ -36,7 +36,7 @@ Python 3.12, FastAPI, SQLAlchemy 2 (async), Alembic, PostgreSQL 16, RabbitMQ (Fa
 uv sync
 cp .env.example .env
 uv run python -m tusumba_common.testing dev-keys   # тестовая пара ключей, впишите public.pem в JWT_PUBLIC_KEY
-docker compose up -d postgres
+docker compose up -d postgres rabbitmq
 uv run --env-file .env alembic upgrade head
 uv run --env-file .env uvicorn app.main:create_app --factory --reload
 ```
@@ -48,6 +48,8 @@ uv run --env-file .env uvicorn app.main:create_app --factory --reload
 | Переменная | По умолчанию | Что это |
 |---|---|---|
 | `DATABASE_URL` | обязательна | `postgresql+asyncpg://user:password@host:5432/db` |
+| `RABBITMQ_URL` | обязательна | адрес RabbitMQ, например `amqp://guest:guest@localhost:5672/` |
+| `OUTBOX_POLL_SECONDS` | `1.0` | интервал отправки событий из outbox в секундах |
 | `JWT_PUBLIC_KEY` | обязательна | публичный ключ Identity в PEM, tusumba-common проверяет им access-токены |
 | `SERVICE_TOKEN` | обязательна для вызовов `/internal` других сервисов | общий сервисный токен для `X-Service-Token` |
 | `LOG_LEVEL` | `INFO` | уровень логов |
@@ -59,10 +61,19 @@ uv run --env-file .env uvicorn app.main:create_app --factory --reload
 uv run ruff format --check .
 uv run ruff check .
 uv run mypy .
-uv run pytest      # PostgreSQL поднимается через testcontainers (нужен Docker)
+uv run pytest      # PostgreSQL и RabbitMQ поднимаются через testcontainers (нужен Docker)
 ```
 
-Без Docker тесты идут на уже запущенном PostgreSQL: `TEST_DATABASE_URL=postgresql+asyncpg://... uv run pytest`.
+Без Docker тесты идут на уже запущенных PostgreSQL и RabbitMQ:
+`TEST_DATABASE_URL=postgresql+asyncpg://... TEST_RABBITMQ_URL=amqp://... uv run pytest`.
+
+## События
+
+Доставка событий - из service-template (#19053). `app.events.enqueue_event(session, event)` добавляет
+событие в outbox в той же транзакции, что и изменение заявки; после коммита APScheduler отправляет
+ожидающие записи в RabbitMQ (exchange `tusumba.events`) и помечает их отправленными. Если отправка
+прервётся, запись останется в outbox и уйдёт при следующей попытке с тем же `event_id`.
+Схемы событий - в [tusumba-contracts](https://github.com/tusumba/tusumba-contracts).
 
 ## Документация
 
