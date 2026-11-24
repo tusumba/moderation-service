@@ -76,7 +76,7 @@ paths:
         - `type = club_page` - заявка на страницу секции (#18090), заполняется блок `club_page`.
 
         Дубликатом считается заявка того же автора и того же типа в статусе `on_review`
-        с тем же названием (для мероприятия - и с той же датой). Дубликат не создаётся.
+        с тем же названием без учёта регистра (для мероприятия - и с той же датой). Дубликат не создаётся.
       requestBody:
         required: true
         content:
@@ -161,7 +161,7 @@ paths:
         '422':
           description: |
             `validation_error` - не заполнены обязательные поля, блок данных не соответствует `type`,
-            дата мероприятия в прошлом, у платного мероприятия нет цены.
+            дата мероприятия в прошлом, у платного мероприятия нет цены или она равна 0.
           content:
             application/json:
               schema:
@@ -881,7 +881,7 @@ components:
         date:
           type: string
           format: date
-          description: Дата проведения, не раньше сегодняшней
+          description: Дата проведения, не раньше сегодняшней; «сегодня» считается по времени Новосибирска
         place_address:
           type: string
           minLength: 1
@@ -891,7 +891,11 @@ components:
           type: boolean
           description: Бесплатное мероприятие
         price:
-          $ref: '#/components/schemas/Money'
+          allOf:
+            - $ref: '#/components/schemas/Money'
+          description: |
+            Цена, обязательна для платного мероприятия (`is_free = false`), `amount` больше 0.
+            У бесплатного мероприятия цена не сохраняется.
     ClubContacts:
       type: object
       description: Контакты секции, ключ - канал связи, значение - адрес
