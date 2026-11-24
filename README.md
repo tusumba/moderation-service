@@ -12,7 +12,8 @@
 - решения по жалобам: подтвердить, отклонить, запросить дополнительную проверку;
 - журнал действий модерации с фильтрами.
 
-База данных `moderation_db`: `applications`, `complaints`, `moderation_log` (в миграциях пока `applications`).
+База данных `moderation_db`: `applications`, `complaints`, `moderation_log` (в миграциях пока `applications`,
+`moderation_log` и таблицы доставки событий `outbox_messages`, `processed_events`).
 
 ## API
 
@@ -74,6 +75,11 @@ uv run pytest      # PostgreSQL и RabbitMQ поднимаются через te
 ожидающие записи в RabbitMQ (exchange `tusumba.events`) и помечает их отправленными. Если отправка
 прервётся, запись останется в outbox и уйдёт при следующей попытке с тем же `event_id`.
 Схемы событий - в [tusumba-contracts](https://github.com/tusumba/tusumba-contracts).
+
+Решение модератора (`POST /v1/moderation/applications/{id}/decision`) меняет статус заявки, добавляет
+запись в `moderation_log` и кладёт в outbox `ApplicationApproved` или `ApplicationRejected` одной
+транзакцией. Строка заявки блокируется до коммита, поэтому при одновременных решениях двух модераторов
+второй получает 409 `application_already_processed`.
 
 ## Документация
 

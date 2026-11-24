@@ -97,7 +97,7 @@
 | жалоба `reject` | complaint | rejected | complaints.status = false |
 | жалоба `extra_check` | complaint | extra_check | complaints.status = extra_check |
 
-Решение и запись журнала сохраняются в одной транзакции.
+Решение, запись журнала и событие в outbox сохраняются в одной транзакции.
 
 Индексы: (`created_at`) - журнал, новые первыми; (`moderator_id`, `created_at`); (`action_type`, `object_id`).
 
@@ -115,8 +115,16 @@
 
 На эту базу из других баз никто не ссылается.
 
-Таблица исходящих событий (transactional outbox) и обработанных событий - общая для всех сервисов,
-описывается вместе с доставкой событий (Спринт 1).
+## outbox_messages, processed_events
+
+Доставка событий (transactional outbox, #19053), таблицы общие для сервисов из service-template.
+
+- `outbox_messages` (`id` = `event_id` конверта, `routing_key`, `payload` jsonb, `created_at`,
+  `published_at` null) - событие записывается в той же транзакции, что и решение по заявке,
+  и отправляется в RabbitMQ после коммита. Индекс `ix_outbox_messages_pending` по `created_at`
+  при `published_at IS NULL`.
+- `processed_events` (`event_id`, `processed_at`) - id принятых событий для идемпотентного приёма.
+  Moderation в Спринте 1 событий не принимает.
 
 ## События брокера
 
