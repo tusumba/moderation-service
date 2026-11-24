@@ -4,12 +4,12 @@ import datetime as dt
 import uuid
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Body, Query
+from fastapi import APIRouter, Body, Depends, Query
 from pydantic import BaseModel, Field
 
 from app.api.deps import UserId
 from app.applications import service
-from app.applications.validation import parse_application
+from app.applications.validation import parse_application, today_in_novosibirsk
 from app.db import Session
 from app.models import Application, ApplicationStatus, ApplicationType
 
@@ -93,8 +93,13 @@ class ApplicationPage(BaseModel):
 
 
 @router.post("/applications", status_code=201)
-async def create_application(user_id: UserId, db: Session, body: RawBody) -> ApplicationOut:
-    new = parse_application(body, today=dt.datetime.now(dt.UTC).date())
+async def create_application(
+    user_id: UserId,
+    db: Session,
+    body: RawBody,
+    today: Annotated[dt.date, Depends(today_in_novosibirsk)],
+) -> ApplicationOut:
+    new = parse_application(body, today=today)
     return ApplicationOut.of(await service.create(db, user_id, new))
 
 

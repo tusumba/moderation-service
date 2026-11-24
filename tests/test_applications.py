@@ -3,22 +3,30 @@
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import httpx2
 import pytest
+from fastapi import FastAPI
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from tusumba_common.testing import make_token
 
+from app.applications.validation import novosibirsk_date, today_in_novosibirsk
 from app.models import DUPLICATE_INDEX, Application
 
-TODAY = datetime.now(UTC).date()
+# Дата не зависит от того, когда запущены тесты: «сегодня» подменяется в приложении.
+TODAY = date(2026, 12, 1)
 NEXT_MONTH = (TODAY + timedelta(days=30)).isoformat()
 REQUIRED_FIELDS = "Заполните обязательные поля."
 DUPLICATE = "У вас уже есть активная заявка на этот объект."
+
+
+@pytest.fixture(autouse=True)
+def fixed_today(app: FastAPI) -> None:
+    app.dependency_overrides[today_in_novosibirsk] = lambda: TODAY
 
 
 @dataclass(frozen=True)
@@ -255,6 +263,19 @@ async def test_event_can_be_today(client: httpx2.AsyncClient, ann: User) -> None
     await submitted(client, ann, event(date=TODAY.isoformat()))
 
 
+@pytest.mark.parametrize(
+    ("moment", "expected"),
+    [
+        (datetime(2026, 11, 30, 16, 59, tzinfo=UTC), date(2026, 11, 30)),
+        # 00:00 по Новосибирску: по UTC ещё вчера
+        (datetime(2026, 11, 30, 17, 0, tzinfo=UTC), date(2026, 12, 1)),
+        (datetime(2026, 11, 30, 23, 30, tzinfo=UTC), date(2026, 12, 1)),
+    ],
+)
+def test_today_is_counted_in_novosibirsk(moment: datetime, expected: date) -> None:
+    assert novosibirsk_date(moment) == expected
+
+
 @pytest.mark.parametrize("value", ["05.12.2026", "2026-02-30", "20261205", 20261205])
 async def test_event_date_format(client: httpx2.AsyncClient, ann: User, value: Any) -> None:
     response = await submit(client, ann, event(date=value))
@@ -287,6 +308,16 @@ async def test_price_must_be_valid(
     response = await submit(client, ann, event(is_free=False, price=price))
     assert response.status_code == 422
     assert [detail["field"] for detail in response.json()["error"]["details"]] == [field]
+
+
+async def test_paid_event_price_must_be_positive(client: httpx2.AsyncClient, ann: User) -> None:
+    response = await submit(
+        client, ann, event(is_free=False, price={"amount": 0, "currency": "RUB"})
+    )
+    message = "Цена платного мероприятия должна быть больше 0."
+    assert_validation_error(
+        response, message, [{"field": "event.price.amount", "message": message}]
+    )
 
 
 async def test_is_free_must_be_boolean(client: httpx2.AsyncClient, ann: User) -> None:

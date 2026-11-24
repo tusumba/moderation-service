@@ -7,7 +7,7 @@
 
 import re
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime, timedelta, timezone
 from typing import Any, NoReturn
 
 from app.applications import errors
@@ -26,9 +26,23 @@ PLACE_REQUIRED = "Укажите место проведения."
 DATE_IN_PAST = "Дата мероприятия не может быть в прошлом."
 DATE_FORMAT = "Укажите дату в формате ГГГГ-ММ-ДД."
 PRICE_REQUIRED = "Укажите цену платного мероприятия."
+PRICE_NOT_POSITIVE = "Цена платного мероприятия должна быть больше 0."
 TYPE_UNKNOWN = "Выберите тип заявки: event или club_page."
 BLOCK_MISMATCH = "Блок не соответствует типу заявки."
 CLUB_NOT_SUPPORTED = "Заявка от имени секции пока недоступна."
+
+
+# «Сегодня» считается по Новосибирску, как в OpenAPI Events.
+# Перехода на летнее время там нет с 2014 года.
+NOVOSIBIRSK = timezone(timedelta(hours=7), "Asia/Novosibirsk")
+
+
+def novosibirsk_date(moment: datetime) -> date:
+    return moment.astimezone(NOVOSIBIRSK).date()
+
+
+def today_in_novosibirsk() -> date:
+    return novosibirsk_date(datetime.now(UTC))
 
 
 @dataclass(frozen=True)
@@ -130,6 +144,9 @@ def _price(value: Any, problems: _Problems) -> dict[str, Any] | None:
         problems.missing("event.price.amount")
     elif isinstance(amount, bool) or not isinstance(amount, int) or amount < 0:
         problems.invalid("event.price.amount", "Сумма в копейках: целое число от 0.")
+    elif amount == 0:
+        # в events-service у платного мероприятия цена больше 0 (CHECK price_matches_is_free)
+        problems.invalid("event.price.amount", PRICE_NOT_POSITIVE)
     if currency is None:
         problems.missing("event.price.currency")
     elif currency not in CURRENCIES:
