@@ -1,8 +1,14 @@
 import uuid
 from typing import Annotated
 
-from fastapi import Depends
-from tusumba_common import ApiError, CurrentUser, get_current_user, require_moderator
+from fastapi import Depends, Request
+from tusumba_common import (
+    ApiError,
+    CurrentUser,
+    PermissionsClient,
+    get_current_user,
+    require_moderator,
+)
 
 
 def _user_uuid(user: CurrentUser) -> uuid.UUID:
@@ -24,5 +30,12 @@ async def moderator_id(user: Annotated[CurrentUser, Depends(require_moderator)])
     return _user_uuid(user)
 
 
+def get_permissions(request: Request) -> PermissionsClient:
+    """Клиент прав Events & Clubs из tusumba-common, создаётся при старте приложения."""
+    permissions: PermissionsClient = request.app.state.permissions
+    return permissions
+
+
 UserId = Annotated[uuid.UUID, Depends(current_user_id)]
 ModeratorId = Annotated[uuid.UUID, Depends(moderator_id)]
+Permissions = Annotated[PermissionsClient, Depends(get_permissions)]

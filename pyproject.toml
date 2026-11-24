@@ -13,7 +13,7 @@ dependencies = [
     "alembic>=1.13",
     "faststream[rabbit]>=0.6,<0.7",
     "apscheduler>=3.11,<4",
-    "tusumba-common @ git+https://github.com/tusumba/tusumba-common.git@v0.3.0",
+    "tusumba-common[redis] @ git+https://github.com/tusumba/tusumba-common.git@v0.4.0",
     "tusumba-contracts @ git+https://github.com/tusumba/tusumba-contracts.git@v0.1.0",
 ]
 

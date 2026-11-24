@@ -1,10 +1,13 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import cast
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 from faststream.rabbit import RabbitBroker
-from tusumba_common import install_error_handlers
+from redis.asyncio import Redis
+from tusumba_common import PermissionsClient, install_error_handlers
+from tusumba_common.permissions import AsyncRedis
 
 from app.api import health, v1
 from app.db import create_engine, create_sessionmaker
@@ -24,6 +27,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.sessionmaker = create_sessionmaker(engine)
         broker = RabbitBroker(settings.rabbitmq_url.get_secret_value())
         app.state.broker = broker
+        redis = (
+            Redis.from_url(settings.redis_url.get_secret_value(), decode_responses=True)
+            if settings.redis_url
+            else None
+        )
+        # В типах redis-py методы Redis не async def, хотя возвращают корутины.
+        app.state.permissions = PermissionsClient(
+            settings.events_url, cast(AsyncRedis | None, redis)
+        )
         scheduler = AsyncIOScheduler()
         try:
             await broker.start()
@@ -41,6 +53,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if scheduler.running:
                 scheduler.shutdown(wait=True)
             await broker.stop()
+            await app.state.permissions.aclose()
+            if redis is not None:
+                await redis.aclose()
             await engine.dispose()
 
     app = FastAPI(title=settings.service_name, lifespan=lifespan)

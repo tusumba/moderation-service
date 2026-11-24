@@ -941,7 +941,9 @@ components:
         club_id:
           type: string
           format: uuid
-          description: Секция-организатор, если заявка на мероприятие подаётся от имени секции (#18102)
+          description: |
+            Секция-организатор, если заявка на мероприятие подаётся от имени секции (#18102).
+            Только для `type = event`; права администратора секции проверяются у events-service.
         event:
           $ref: '#/components/schemas/EventApplicationData'
         club_page:

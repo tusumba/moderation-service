@@ -5,15 +5,22 @@ import uuid
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from tusumba_common import ApiError, PermissionsClient
 
 from app.applications import errors
 from app.applications.validation import NewApplication
 from app.models import DUPLICATE_INDEX, Application, ApplicationStatus, ApplicationType
 
 
-async def create(db: AsyncSession, author_id: uuid.UUID, new: NewApplication) -> Application:
+async def create(
+    db: AsyncSession, permissions: PermissionsClient, author_id: uuid.UUID, new: NewApplication
+) -> Application:
     """Сохраняет заявку со статусом on_review. Дубликат (#18090, п. 5.3) даёт 409."""
-    application = Application(type=new.type, author_user_id=author_id, payload=new.payload)
+    if new.club_id is not None:
+        await _check_club_admin(permissions, new.club_id, author_id)
+    application = Application(
+        type=new.type, author_user_id=author_id, club_id=new.club_id, payload=new.payload
+    )
     db.add(application)
     try:
         await db.flush()
@@ -26,6 +33,23 @@ async def create(db: AsyncSession, author_id: uuid.UUID, new: NewApplication) ->
     await db.refresh(application)
     await db.commit()
     return application
+
+
+async def _check_club_admin(
+    permissions: PermissionsClient, club_id: uuid.UUID, author_id: uuid.UUID
+) -> None:
+    """Заявку от имени секции подаёт только её администратор (#18102).
+
+    Нет секции или она заблокирована - 404 club_not_found от events-service как есть.
+    """
+    try:
+        club = await permissions.club_permissions(club_id, author_id)
+    except ApiError as exc:
+        if exc.status_code == 503:
+            raise errors.application_not_sent() from None
+        raise
+    if not club.is_admin:
+        raise errors.club_forbidden()
 
 
 async def list_mine(

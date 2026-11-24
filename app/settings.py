@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     rabbitmq_url: SecretStr
     outbox_poll_seconds: float = Field(default=1.0, gt=0)
 
+    # Права на секцию (#18102) спрашиваем у events-service, ответ кешируем в Redis.
+    events_url: str = "http://events:8000"
+    redis_url: SecretStr | None = None
+
     @field_validator("database_url")
     @classmethod
     def _require_asyncpg(cls, value: SecretStr) -> SecretStr:
