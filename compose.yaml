@@ -5,6 +5,7 @@ x-service: &service
     SERVICE_NAME: moderation
     ENVIRONMENT: local
     DATABASE_URL: postgresql+asyncpg://tusumba:tusumba@postgres:5432/tusumba
+    RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
     JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY:-}
     SERVICE_TOKEN: ${SERVICE_TOKEN:-dev-service-token}
   depends_on:
@@ -28,6 +29,16 @@ services:
       timeout: 3s
       retries: 10
 
+  rabbitmq:
+    image: rabbitmq:3.13-alpine
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
   migrate:
     <<: *service
     command: ["alembic", "upgrade", "head"]
@@ -38,6 +49,8 @@ services:
       - "${APP_PORT:-8000}:8000"
     depends_on:
       postgres:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
