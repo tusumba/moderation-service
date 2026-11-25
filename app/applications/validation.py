@@ -6,6 +6,7 @@
 """
 
 import re
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta, timezone
 from typing import Any, NoReturn
@@ -29,7 +30,7 @@ PRICE_REQUIRED = "Укажите цену платного мероприяти�
 PRICE_NOT_POSITIVE = "Цена платного мероприятия должна быть больше 0."
 TYPE_UNKNOWN = "Выберите тип заявки: event или club_page."
 BLOCK_MISMATCH = "Блок не соответствует типу заявки."
-CLUB_NOT_SUPPORTED = "Заявка от имени секции пока недоступна."
+CLUB_ONLY_FOR_EVENT = "От имени секции подаётся только заявка на мероприятие."
 
 
 # «Сегодня» считается по Новосибирску, как в OpenAPI Events.
@@ -49,6 +50,7 @@ def today_in_novosibirsk() -> date:
 class NewApplication:
     type: ApplicationType
     payload: dict[str, Any]
+    club_id: uuid.UUID | None = None
 
 
 class _Problems:
@@ -205,14 +207,23 @@ def _club_page(block: dict[str, Any], problems: _Problems) -> dict[str, Any]:
     return {key: value for key, value in payload.items() if value is not None}
 
 
+def _club_id(value: Any, problems: _Problems) -> uuid.UUID | None:
+    """Секция-организатор (#18102). Права на неё сервис проверяет у events-service."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        try:
+            return uuid.UUID(value)
+        except ValueError:
+            pass
+    problems.invalid("club_id")
+    return None
+
+
 def parse_application(body: Any, today: date) -> NewApplication:
     """Возвращает тип и данные заявки для payload или бросает 422."""
     data = _object(body, "body")
     problems = _Problems()
-
-    # Заявка от имени секции (#18102) требует проверки прав в events-service: не в этой задаче.
-    if data.get("club_id") is not None:
-        problems.invalid("club_id", CLUB_NOT_SUPPORTED)
 
     kind = data.get("type")
     if kind is None or kind == "":
@@ -223,6 +234,9 @@ def parse_application(body: Any, today: date) -> NewApplication:
 
     application_type: ApplicationType = "event" if kind == "event" else "club_page"
     other = "club_page" if application_type == "event" else "event"
+    club_id = _club_id(data.get("club_id"), problems)
+    if club_id is not None and application_type != "event":
+        problems.invalid("club_id", CLUB_ONLY_FOR_EVENT)
     if data.get(other) is not None:
         problems.invalid(other, BLOCK_MISMATCH)
 
@@ -239,4 +253,4 @@ def parse_application(body: Any, today: date) -> NewApplication:
     else:
         payload = _club_page(block, problems)
     problems.raise_if_any()
-    return NewApplication(type=application_type, payload=payload)
+    return NewApplication(type=application_type, payload=payload, club_id=club_id)

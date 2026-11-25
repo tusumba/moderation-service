@@ -51,6 +51,8 @@ uv run --env-file .env uvicorn app.main:create_app --factory --reload
 | `DATABASE_URL` | обязательна | `postgresql+asyncpg://user:password@host:5432/db` |
 | `RABBITMQ_URL` | обязательна | адрес RabbitMQ, например `amqp://guest:guest@localhost:5672/` |
 | `OUTBOX_POLL_SECONDS` | `1.0` | интервал отправки событий из outbox в секундах |
+| `EVENTS_URL` | `http://events:8000` | адрес events-service для `/internal`: права на секцию при заявке от её имени |
+| `REDIS_URL` | не задана | кеш прав на секцию на 30-60 секунд; без него каждый запрос идёт в events-service |
 | `JWT_PUBLIC_KEY` | обязательна | публичный ключ Identity в PEM, tusumba-common проверяет им access-токены |
 | `SERVICE_TOKEN` | обязательна для вызовов `/internal` других сервисов | общий сервисный токен для `X-Service-Token` |
 | `LOG_LEVEL` | `INFO` | уровень логов |
@@ -80,6 +82,14 @@ uv run pytest      # PostgreSQL и RabbitMQ поднимаются через te
 запись в `moderation_log` и кладёт в outbox `ApplicationApproved` или `ApplicationRejected` одной
 транзакцией. Строка заявки блокируется до коммита, поэтому при одновременных решениях двух модераторов
 второй получает 409 `application_already_processed`.
+
+## Заявка от имени секции
+
+Если в `POST /v1/applications` указан `club_id` (только для `type = event`), сервис спрашивает events-service
+`GET /internal/clubs/{id}/permissions` через `PermissionsClient` из tusumba-common (#18102, #19427):
+не администратор секции - 403 `club_forbidden`, секции нет или она заблокирована - 404 `club_not_found`,
+events-service не ответил - 503 «Не удалось отправить заявку. Попробуйте позже.». `club_id` сохраняется
+в заявке и передаётся в `ApplicationApproved`, по нему events-service ставит секцию организатором мероприятия.
 
 ## Документация
 

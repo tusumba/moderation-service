@@ -392,15 +392,6 @@ async def test_body_must_be_object(client: httpx2.AsyncClient, ann: User, body: 
     assert response.json()["error"]["code"] == "validation_error"
 
 
-async def test_application_on_behalf_of_club_is_not_available_yet(
-    client: httpx2.AsyncClient, session: AsyncSession, ann: User
-) -> None:
-    response = await submit(client, ann, {**event(), "club_id": str(uuid.uuid4())})
-    message = "Заявка от имени секции пока недоступна."
-    assert_validation_error(response, message, [{"field": "club_id", "message": message}])
-    assert await count_applications(session, ann) == 0
-
-
 # --- дубликаты (#18090, п. 5.3) ---
 
 
