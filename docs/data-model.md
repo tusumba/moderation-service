@@ -70,7 +70,10 @@
 Индексы: (`status`, `created_at`) - очередь модератора; (`target_type`, `target_id`) - все жалобы
 на объект; (`author_user_id`, `created_at`) - «мои жалобы».
 
-Уникальность: (`author_user_id`, `target_type`, `target_id`) при `status` in (`new`, `extra_check`) -
+Версию текста (`target_version_id`) сервис получает при подаче жалобы из `current_version_id`
+в `GET /internal/events/{id}` или `GET /internal/clubs/{id}` events-service.
+
+Уникальность `uq_complaints_open_duplicate`: (`author_user_id`, `target_type`, `target_id`) при `status` in (`new`, `extra_check`) -
 частичный уникальный индекс, повторная жалоба на объект до решения не создаётся (#18120, ошибка 6.2).
 
 ## moderation_log
