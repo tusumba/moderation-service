@@ -1,10 +1,10 @@
-"""POST /v1/complaints по OpenAPI Moderation (#19429)."""
+"""POST /v1/complaints (#19429), GET /v1/me/complaints и /v1/me/complaints/{id} (#19430)."""
 
 import datetime as dt
 import uuid
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Body
+from fastapi import APIRouter, Body, Query
 from pydantic import BaseModel
 
 from app.api.deps import UserId
@@ -50,9 +50,34 @@ class ComplaintOut(BaseModel):
         )
 
 
+class ComplaintPage(BaseModel):
+    items: list[ComplaintOut]
+    total: int
+    page: int
+    size: int
+
+
 @router.post("/complaints", status_code=201)
 async def create_complaint(
     user_id: UserId, db: Session, events: Events, body: RawBody
 ) -> ComplaintOut:
     new = parse_complaint(body)
     return ComplaintOut.of(await service.create(db, events, user_id, new))
+
+
+@router.get("/me/complaints")
+async def list_my_complaints(
+    user_id: UserId,
+    db: Session,
+    page: Annotated[int, Query(ge=1)] = 1,
+    size: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> ComplaintPage:
+    rows, total = await service.list_mine(db, user_id, page=page, size=size)
+    return ComplaintPage(
+        items=[ComplaintOut.of(row) for row in rows], total=total, page=page, size=size
+    )
+
+
+@router.get("/me/complaints/{id}")
+async def get_my_complaint(user_id: UserId, db: Session, id: uuid.UUID) -> ComplaintOut:
+    return ComplaintOut.of(await service.get_mine(db, user_id, id))

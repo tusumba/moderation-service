@@ -12,5 +12,9 @@ def complaint_not_sent() -> ApiError:
     return ApiError(503, "service_unavailable", "Не удалось отправить жалобу. Попробуйте позже.")
 
 
+def complaint_not_found() -> ApiError:
+    return ApiError(404, "complaint_not_found", "Жалоба не найдена.")  # #18121, ошибка 6.1
+
+
 def target_unavailable() -> ApiError:
     return ApiError(404, "complaint_target_unavailable", "Объект жалобы недоступен.")  # 6.4
