@@ -10,6 +10,7 @@ from tusumba_common import PermissionsClient, install_error_handlers
 from tusumba_common.permissions import AsyncRedis
 
 from app.api import health, v1
+from app.clients.events import EventsClient
 from app.db import create_engine, create_sessionmaker
 from app.events import publish_pending
 from app.logging import configure_logging
@@ -36,6 +37,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.permissions = PermissionsClient(
             settings.events_url, cast(AsyncRedis | None, redis)
         )
+        app.state.events_client = EventsClient(settings.events_url)
         scheduler = AsyncIOScheduler()
         try:
             await broker.start()
@@ -54,6 +56,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 scheduler.shutdown(wait=True)
             await broker.stop()
             await app.state.permissions.aclose()
+            await app.state.events_client.aclose()
             if redis is not None:
                 await redis.aclose()
             await engine.dispose()

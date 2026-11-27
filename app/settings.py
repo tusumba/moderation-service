@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     rabbitmq_url: SecretStr
     outbox_poll_seconds: float = Field(default=1.0, gt=0)
 
-    # Права на секцию (#18102) спрашиваем у events-service, ответ кешируем в Redis.
+    # events-service: права на секцию (#18102, кеш в Redis) и объект жалобы (#18120).
     events_url: str = "http://events:8000"
     redis_url: SecretStr | None = None
 
